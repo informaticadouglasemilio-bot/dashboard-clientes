@@ -1,0 +1,606 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cobranças & Recebíveis</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    dialog::backdrop { background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(2px); }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans">
+
+  <div id="loadingScreen" class="min-h-screen flex items-center justify-center bg-slate-50">
+    <div class="text-xl font-semibold text-slate-600 animate-pulse">A carregar...</div>
+  </div>
+
+  <!-- Modal de Pagamento -->
+  <dialog id="payModal" class="p-0 rounded-2xl shadow-2xl w-full max-w-sm border-0">
+    <div class="p-6 bg-white">
+      <h3 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b pb-2">
+        <i data-lucide="check-circle" class="w-5 h-5 text-emerald-500"></i> Registrar Pagamento
+      </h3>
+      <form id="payForm" class="space-y-4">
+        <input type="hidden" id="payDebtId">
+        
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Valor Pago (R$)</label>
+          <input type="number" id="payAmount" step="0.01" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Data do Pagamento</label>
+          <input type="date" id="payDate" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
+        </div>
+
+        <div id="nextDueContainer">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Próximo Vencimento</label>
+          <input type="date" id="nextDueDate" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
+          <p class="text-xs text-slate-500 mt-1">Edite se quiser mudar a data da próxima parcela.</p>
+        </div>
+
+        <div class="flex gap-2 mt-6">
+          <button type="button" onclick="document.getElementById('payModal').close()" class="flex-1 bg-slate-100 text-slate-700 py-2 rounded-lg hover:bg-slate-200">Cancelar</button>
+          <button type="submit" class="flex-1 bg-emerald-500 text-white py-2 rounded-lg hover:bg-emerald-600 font-medium shadow-md">Confirmar Baixa</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal de Sucesso após Pagamento -->
+  <dialog id="successModal" class="p-0 rounded-2xl shadow-2xl w-full max-w-sm border-0">
+    <div class="p-6 bg-white text-center">
+      <div class="w-16 h-16 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4">
+        <i data-lucide="check" class="w-8 h-8"></i>
+      </div>
+      <h3 class="text-xl font-bold text-slate-800 mb-2">Pagamento Salvo!</h3>
+      <p class="text-sm text-slate-500 mb-6">A parcela foi abatida do saldo devedor. O que deseja fazer agora?</p>
+      
+      <div class="space-y-3">
+        <button id="btnSuccessWhats" class="w-full flex items-center justify-center gap-2 bg-green-500 text-white font-bold py-2.5 rounded-lg hover:bg-green-600 transition-colors shadow-sm">
+          <i data-lucide="message-circle" class="w-5 h-5"></i> Enviar Comprovante WhatsApp
+        </button>
+        
+        <button id="btnSuccessPrint" class="w-full flex items-center justify-center gap-2 bg-blue-50 text-blue-600 font-bold py-2.5 rounded-lg hover:bg-blue-100 transition-colors">
+          <i data-lucide="printer" class="w-5 h-5"></i> Gerar Recibo (PDF)
+        </button>
+        
+        <button onclick="document.getElementById('successModal').close()" class="w-full text-slate-400 hover:text-slate-600 font-medium py-2">
+          Fechar
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Modal de Histórico -->
+  <dialog id="historyModal" class="p-0 rounded-2xl shadow-2xl w-full max-w-md border-0">
+    <div class="p-6 bg-white">
+      <div class="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
+        <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <i data-lucide="history" class="w-5 h-5 text-blue-500"></i> Histórico & Recibos
+        </h3>
+        <button onclick="document.getElementById('historyModal').close()" class="text-slate-400 hover:text-slate-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="historyContent" class="space-y-3 max-h-64 overflow-y-auto pr-2"></div>
+      <div class="mt-6 text-right">
+        <button onclick="document.getElementById('historyModal').close()" class="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200">Fechar</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Aplicação Principal -->
+  <div id="appContent" class="hidden min-h-screen p-4 md:p-8">
+    <div class="max-w-7xl mx-auto space-y-6">
+      
+      <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b border-slate-200 gap-4">
+        <div>
+          <h1 class="text-3xl font-bold text-slate-900">Cobranças & Recebíveis</h1>
+          <p class="text-slate-500 mt-1">Gestão de parcelas e saldos devedores.</p>
+        </div>
+        
+        <div class="flex gap-2 w-full md:w-auto">
+          <input type="file" id="importFile" accept=".json" class="hidden" onchange="importData(event)">
+          <button onclick="document.getElementById('importFile').click()" class="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors shadow-sm">
+            <i data-lucide="upload" class="w-4 h-4"></i> Importar
+          </button>
+          <button onclick="exportData()" class="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 text-white font-medium rounded-lg hover:bg-slate-800 transition-colors shadow-sm">
+            <i data-lucide="download" class="w-4 h-4"></i> Exportar
+          </button>
+        </div>
+      </header>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center space-x-4 border-l-4 border-l-blue-500">
+          <div class="p-3 bg-blue-50 text-blue-600 rounded-xl"><i data-lucide="wallet" class="w-6 h-6"></i></div>
+          <div>
+            <p class="text-sm font-medium text-slate-500">Falta Pagar (Total Geral)</p>
+            <h2 id="sumTotalAmount" class="text-2xl font-bold text-slate-800">R$ 0,00</h2>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center space-x-4 border-l-4 border-l-emerald-500">
+          <div class="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><i data-lucide="trending-up" class="w-6 h-6"></i></div>
+          <div>
+            <p class="text-sm font-medium text-slate-500">Parcelas a Receber</p>
+            <h2 id="sumInstallments" class="text-2xl font-bold text-slate-800">R$ 0,00</h2>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center space-x-4 border-l-4 border-l-red-500">
+          <div class="p-3 bg-red-50 text-red-600 rounded-xl"><i data-lucide="alert-triangle" class="w-6 h-6"></i></div>
+          <div>
+            <p class="text-sm font-medium text-slate-500">Parcelas em Atraso</p>
+            <h2 id="sumOverdueInstallments" class="text-2xl font-bold text-red-600">R$ 0,00</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 xl:grid-cols-4 gap-6">
+        
+        <!-- Formulário -->
+        <div class="xl:col-span-1">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sticky top-6">
+            <h3 id="formTitle" class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <i data-lucide="plus" class="w-5 h-5 text-blue-500"></i> Novo Registo
+            </h3>
+            
+            <form id="debtForm" class="space-y-4">
+              <input type="hidden" id="editId" value="">
+              
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Cliente</label>
+                <input type="text" id="inputName" required placeholder="Nome do cliente" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">WhatsApp</label>
+                <input type="text" id="inputPhone" placeholder="Ex: 51999999999" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Descrição / Referência</label>
+                <input type="text" id="inputDescription" list="descOptions" placeholder="Selecione ou digite..." class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                <datalist id="descOptions">
+                  <option value="Empréstimo de Dinheiro"></option>
+                  <option value="Aparelho Celular"></option>
+                  <option value="Cartão de Vale Transporte"></option>
+                  <option value="Cartão de Alimentação"></option>
+                  <option value="Roupas / Vestuário"></option>
+                  <option value="Serviços Prestados"></option>
+                </datalist>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Valor Total</label>
+                  <input type="number" id="inputTotalAmount" step="0.01" required placeholder="0.00" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Valor Parcela</label>
+                  <input type="number" id="inputInstallmentAmount" step="0.01" required placeholder="0.00" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Vencimento</label>
+                  <input type="date" id="inputDueDate" required class="w-full px-2 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Qtd Parcelas</label>
+                  <input type="number" id="inputTotalInstallments" min="1" placeholder="Ex: 10" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                </div>
+              </div>
+
+              <div class="flex gap-2 mt-4">
+                <button type="button" id="cancelEditBtn" class="hidden flex-1 bg-slate-200 text-slate-700 font-medium py-2 rounded-lg hover:bg-slate-300">Cancelar</button>
+                <button type="submit" id="submitBtn" class="flex-[2] bg-slate-900 text-white font-medium py-2 rounded-lg hover:bg-slate-800 shadow-md">Guardar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Tabela -->
+        <div class="xl:col-span-3">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+              <h3 class="text-lg font-bold text-slate-800">Lista de Recebíveis</h3>
+            </div>
+            
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse min-w-[900px]">
+                <thead id="tableHeader" class="hidden bg-slate-50/50 text-slate-500 text-xs uppercase tracking-wider">
+                  <tr>
+                    <th class="p-4 font-medium">Cliente & Ref</th>
+                    <th class="p-4 font-medium">Falta Pagar</th>
+                    <th class="p-4 font-medium">Parcela</th>
+                    <th class="p-4 font-medium">Vencimento</th>
+                    <th class="p-4 font-medium text-center">Status</th>
+                    <th class="p-4 font-medium text-center">Cobrar</th>
+                    <th class="p-4 font-medium text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="debtsTableBody" class="divide-y divide-slate-100"></tbody>
+              </table>
+              <div id="emptyState" class="p-8 text-center text-slate-500 hidden">
+                Nenhum registo encontrado. Adicione no formulário ao lado ou importe um backup.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+    let debts = JSON.parse(localStorage.getItem('dashboard_dividas_v5')) || [];
+
+    // --- CORREÇÃO DE DADOS ANTIGOS PARA NÃO BLOQUEAR A TELA DE CARREGAMENTO ---
+    debts = debts.map(debt => {
+      let dDate = debt.dueDate || '';
+      // Converte DD/MM/YYYY para YYYY-MM-DD
+      if (dDate.includes('/')) {
+        const parts = dDate.split('/');
+        if (parts.length === 3) dDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
+      return {
+        ...debt,
+        dueDate: dDate || new Date().toISOString().split('T')[0], // Protege contra datas nulas
+        history: debt.history || [],
+        totalAmount: parseFloat(debt.totalAmount) || 0,
+        installmentAmount: parseFloat(debt.installmentAmount) || 0,
+        status: debt.status || 'pending'
+      };
+    });
+
+    // Funções de Importar / Exportar
+    function exportData() {
+      if (debts.length === 0) return alert("Não há dados para exportar.");
+      const dataStr = JSON.stringify(debts, null, 2);
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup_cobrancas_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function importData(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const importedData = JSON.parse(e.target.result);
+          if (Array.isArray(importedData)) {
+            if (confirm("Isso irá APAGAR os dados atuais e substituir pelo backup importado. Continuar?")) {
+              debts = importedData;
+              saveAndRender();
+              alert("Dados importados com sucesso!");
+            }
+          }
+        } catch (error) {
+          alert("Erro ao ler o ficheiro de backup.");
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    // Notificações para Admin
+    function verificarNotificacoesParaAdmin() {
+      const adminPhone = "5551997255314";
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+      let alertas = [];
+
+      debts.forEach(debt => {
+        if (debt.status === 'paid' || getRemainingAmount(debt) <= 0) return;
+        const [y, m, d] = debt.dueDate.split('-');
+        if (!y || !m || !d) return; // Evita falhas caso a data continue inválida
+
+        const vencimento = new Date(y, m - 1, d);
+        vencimento.setHours(0, 0, 0, 0);
+        const diferencaDias = Math.ceil((vencimento.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+
+        if (diferencaDias < 0) alertas.push(`🔴 *ATRASADO:* O cliente *${debt.name}* está com a parcela atrasada!`);
+        else if (diferencaDias === 3) alertas.push(`🟡 *VENCE EM 3 DIAS:* A parcela de *${debt.name}* está a chegar.`);
+      });
+
+      if (alertas.length > 0) {
+        const ultimaNotificacao = localStorage.getItem('ultima_notificacao_enviada');
+        const dataAtualString = hoje.toISOString().split('T')[0];
+        if (ultimaNotificacao !== dataAtualString) {
+          setTimeout(() => {
+            if (confirm("Existem clientes com parcelas atrasadas ou a vencer em 3 dias. Deseja enviar o relatório para o seu WhatsApp?")) {
+              const texto = encodeURIComponent("📊 *Resumo de Cobranças*\n\n" + alertas.join("\n"));
+              window.open(`https://wa.me/${adminPhone}?text=${texto}`, '_blank');
+              localStorage.setItem('ultima_notificacao_enviada', dataAtualString);
+            }
+          }, 1000);
+        }
+      }
+    }
+
+    // Inicia e esconde carregamento com segurança
+    setTimeout(() => {
+      document.getElementById('loadingScreen').classList.add('hidden');
+      document.getElementById('appContent').classList.remove('hidden');
+      saveAndRender();
+      verificarNotificacoesParaAdmin(); 
+    }, 300);
+
+    function saveAndRender() {
+      debts.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+      localStorage.setItem('dashboard_dividas_v5', JSON.stringify(debts));
+      updateUI();
+    }
+
+    const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
+    const formatDate = (dateStr) => {
+      if (!dateStr || !dateStr.includes('-')) return dateStr || '';
+      const [y, m, d] = dateStr.split('-');
+      return `${d}/${m}/${y}`;
+    };
+
+    const getRemainingAmount = (debt) => Math.max(0, debt.totalAmount - (debt.history || []).reduce((acc, h) => acc + h.amount, 0));
+
+    const getDebtStatus = (debt) => {
+      if (debt.status === 'paid' || getRemainingAmount(debt) <= 0) return 'paid';
+      if (!debt.dueDate || !debt.dueDate.includes('-')) return 'pending'; // Fallback segurança
+
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const [y, m, d] = debt.dueDate.split('-');
+      const due = new Date(y, m - 1, d); due.setHours(0, 0, 0, 0);
+      const diff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diff < 0 ? 'overdue' : (diff <= 3 ? 'soon' : 'pending');
+    };
+
+    function updateUI() {
+      const pendingDebts = debts.filter(d => getDebtStatus(d) !== 'paid');
+      const overdueDebts = pendingDebts.filter(d => getDebtStatus(d) === 'overdue');
+      
+      document.getElementById('sumTotalAmount').textContent = formatCurrency(pendingDebts.reduce((s, d) => s + getRemainingAmount(d), 0));
+      document.getElementById('sumInstallments').textContent = formatCurrency(pendingDebts.reduce((s, d) => s + d.installmentAmount, 0));
+      document.getElementById('sumOverdueInstallments').textContent = formatCurrency(overdueDebts.reduce((s, d) => s + d.installmentAmount, 0));
+
+      const tbody = document.getElementById('debtsTableBody');
+      if (!debts.length) {
+        document.getElementById('tableHeader').classList.add('hidden');
+        document.getElementById('emptyState').classList.remove('hidden');
+        tbody.innerHTML = '';
+      } else {
+        document.getElementById('tableHeader').classList.remove('hidden');
+        document.getElementById('emptyState').classList.add('hidden');
+        
+        tbody.innerHTML = debts.map(debt => {
+          const status = getDebtStatus(debt);
+          const remaining = getRemainingAmount(debt);
+          let rowClass = 'hover:bg-slate-50 transition-colors ';
+          if (status === 'overdue') rowClass += 'bg-red-50/30';
+          if (status === 'paid') rowClass += 'opacity-50';
+
+          const badges = {
+            paid: '<span class="px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-bold">Quitado</span>',
+            overdue: '<span class="px-2 py-1 rounded bg-red-100 text-red-700 text-xs font-bold animate-pulse">Atrasado</span>',
+            soon: '<span class="px-2 py-1 rounded bg-orange-100 text-orange-800 text-xs font-bold">Vence Breve</span>',
+            pending: '<span class="px-2 py-1 rounded bg-slate-100 text-slate-700 text-xs font-bold">Pendente</span>'
+          };
+
+          return `
+            <tr class="${rowClass}">
+              <td class="p-4">
+                <div class="font-medium text-slate-800">${debt.name}</div>
+                <div class="text-xs text-slate-500">${debt.description || ''}</div>
+              </td>
+              <td class="p-4">
+                <div class="font-bold">${formatCurrency(remaining)}</div>
+                <div class="text-xs text-slate-400 line-through">Total: ${formatCurrency(debt.totalAmount)}</div>
+              </td>
+              <td class="p-4">
+                <div class="font-bold">${formatCurrency(debt.installmentAmount)}</div>
+                <div class="text-xs text-slate-500">Pagas: ${debt.paidInstallments || 0} ${debt.totalInstallments ? `de ${debt.totalInstallments}` : ''}</div>
+              </td>
+              <td class="p-4 text-sm font-medium">${formatDate(debt.dueDate)}</td>
+              <td class="p-4 text-center">${badges[status]}</td>
+              <td class="p-4 w-28">
+                ${status !== 'paid' ? `<button data-action="notify" data-id="${debt.id}" class="w-full py-1.5 px-2 text-xs font-bold text-white bg-green-500 rounded hover:bg-green-600 shadow-sm"><i data-lucide="message-circle" class="w-3 h-3 inline"></i> Whats</button>` : '-'}
+              </td>
+              <td class="p-4 text-right">
+                <div class="flex items-center justify-end gap-1">
+                  ${status !== 'paid' ? `<button data-action="openPay" data-id="${debt.id}" class="p-1.5 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded" title="Dar Baixa (Pagar)"><i data-lucide="check" class="w-4 h-4"></i></button>` : ''}
+                  <button data-action="history" data-id="${debt.id}" class="p-1.5 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded" title="Histórico e Recibos"><i data-lucide="list" class="w-4 h-4"></i></button>
+                  <button data-action="edit" data-id="${debt.id}" class="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded" title="Editar"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                  <button data-action="delete" data-id="${debt.id}" class="p-1.5 text-red-400 bg-red-50 hover:bg-red-100 rounded" title="Excluir"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+        lucide.createIcons();
+      }
+    }
+
+    document.getElementById('payForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const id = document.getElementById('payDebtId').value;
+      const amount = parseFloat(document.getElementById('payAmount').value);
+      const payDate = document.getElementById('payDate').value;
+      const nextDue = document.getElementById('nextDueDate').value;
+      
+      const debt = debts.find(d => d.id === id);
+      if(!debt.history) debt.history = [];
+      
+      debt.history.push({ date: payDate, amount: amount });
+      debt.paidInstallments = (debt.paidInstallments || 0) + 1;
+      
+      const remaining = getRemainingAmount(debt);
+      if (remaining <= 0 || (debt.totalInstallments && debt.paidInstallments >= debt.totalInstallments)) {
+        debt.status = 'paid';
+      } else {
+        debt.dueDate = nextDue; 
+      }
+      
+      saveAndRender();
+      
+      document.getElementById('payModal').close();
+      const historyIndex = debt.history.length - 1;
+      
+      document.getElementById('btnSuccessPrint').onclick = () => printReceipt(debt.id, historyIndex);
+      document.getElementById('btnSuccessWhats').onclick = () => sendReceiptWhatsApp(debt.id, historyIndex);
+      
+      document.getElementById('successModal').showModal();
+    });
+
+    window.printReceipt = function(debtId, historyIndex) {
+      const debt = debts.find(d => d.id === debtId);
+      const payment = debt.history[historyIndex];
+      const receiptWindow = window.open('', '_blank', 'width=600,height=400');
+      receiptWindow.document.write(`
+        <html><head><title>Recibo</title>
+        <style>body{font-family: Arial; padding: 20px; text-align: center; color: #333;} .box{border: 2px dashed #ccc; padding: 30px; border-radius: 10px; max-width: 400px; margin: auto;} h2{margin-top:0;}</style>
+        </head><body>
+        <div class="box">
+          <h2>RECIBO DE PAGAMENTO</h2>
+          <p><strong>Recebemos de:</strong> ${debt.name}</p>
+          <p><strong>A quantia de:</strong> ${formatCurrency(payment.amount)}</p>
+          <p><strong>Referente a:</strong> Parcela ${historyIndex + 1} - ${debt.description || 'Dívida em geral'}</p>
+          <hr style="border:0; border-top:1px solid #eee; margin:20px 0;">
+          <p><strong>Data do Pagamento:</strong> ${formatDate(payment.date)}</p>
+          <br><br>
+          <p>_____________________________________</p>
+          <p style="font-size: 12px; color: #777;">Assinatura do Recebedor</p>
+        </div>
+        <script>window.print();<\/script>
+        </body></html>
+      `);
+      receiptWindow.document.close();
+    };
+
+    window.sendReceiptWhatsApp = function(debtId, historyIndex) {
+      const debt = debts.find(d => d.id === debtId);
+      const payment = debt.history[historyIndex];
+      const remaining = getRemainingAmount(debt);
+      
+      let msg = `Olá *${debt.name}*! 👋\n\nConfirmamos o recebimento do seu pagamento no valor de *${formatCurrency(payment.amount)}* realizado no dia ${formatDate(payment.date)}.\n\nReferente a: ${debt.description || 'Sua conta'}.\n\n`;
+      if(remaining > 0) {
+        msg += `Falta pagar (Saldo devedor): *${formatCurrency(remaining)}*.\n`;
+      } else {
+        msg += `✅ *Conta Quitada com sucesso!* Muito obrigado!\n`;
+      }
+      msg += `\nAgradecemos a preferência!`;
+      
+      const phoneStr = debt.phone ? '55' + debt.phone.replace(/\D/g,'') : '';
+      window.open(`https://wa.me/${phoneStr}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+
+    document.getElementById('debtsTableBody').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const debtData = debts.find(d => d.id === btn.dataset.id);
+
+      if (action === 'openPay') {
+        document.getElementById('payDebtId').value = debtData.id;
+        document.getElementById('payAmount').value = Math.min(debtData.installmentAmount, getRemainingAmount(debtData));
+        document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+        
+        if(debtData.dueDate && debtData.dueDate.includes('-')) {
+          let [y, m, d] = debtData.dueDate.split('-');
+          let next = new Date(y, m - 1, d);
+          next.setMonth(next.getMonth() + 1);
+          document.getElementById('nextDueDate').value = next.toISOString().split('T')[0];
+        }
+        
+        const remaining = getRemainingAmount(debtData);
+        if(remaining <= debtData.installmentAmount) {
+           document.getElementById('nextDueContainer').style.display = 'none';
+        } else {
+           document.getElementById('nextDueContainer').style.display = 'block';
+        }
+        document.getElementById('payModal').showModal();
+      } 
+      else if (action === 'history') {
+        const content = document.getElementById('historyContent');
+        if (!debtData.history || !debtData.history.length) {
+          content.innerHTML = `<p class="text-slate-500 text-center py-4">Nenhum pagamento registado.</p>`;
+        } else {
+          content.innerHTML = debtData.history.map((h, i) => `
+            <div class="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-100">
+              <div>
+                <span class="text-sm font-bold text-slate-700">Parcela ${i + 1}</span>
+                <span class="text-xs text-slate-500 block">Data: ${formatDate(h.date)}</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="font-bold text-emerald-600">${formatCurrency(h.amount)}</span>
+                <button onclick="printReceipt('${debtData.id}', ${i})" class="text-blue-500 hover:text-blue-700 bg-blue-100 p-1.5 rounded" title="Imprimir Recibo">
+                  <i data-lucide="printer" class="w-4 h-4"></i>
+                </button>
+                <button onclick="sendReceiptWhatsApp('${debtData.id}', ${i})" class="text-green-500 hover:text-green-700 bg-green-100 p-1.5 rounded" title="Enviar Whats">
+                  <i data-lucide="message-circle" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+          `).join('');
+          lucide.createIcons();
+        }
+        document.getElementById('historyModal').showModal();
+      }
+      else if (action === 'notify') {
+        const msg = encodeURIComponent(`Olá ${debtData.name}, lembrete da sua parcela de ${formatCurrency(debtData.installmentAmount)} (Venc: ${formatDate(debtData.dueDate)}). Saldo: ${formatCurrency(getRemainingAmount(debtData))}.`);
+        window.open(`https://wa.me/${debtData.phone ? '55'+debtData.phone.replace(/\D/g,'') : ''}?text=${msg}`, '_blank');
+      }
+      else if (action === 'edit') {
+        document.getElementById('editId').value = debtData.id;
+        ['Name', 'Phone', 'Description', 'TotalAmount', 'InstallmentAmount', 'DueDate', 'TotalInstallments'].forEach(f => {
+          const el = document.getElementById('input' + f);
+          if(el) el.value = debtData[f.charAt(0).toLowerCase() + f.slice(1)] || '';
+        });
+        document.getElementById('submitBtn').textContent = 'Guardar';
+        document.getElementById('cancelEditBtn').classList.remove('hidden');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      else if (action === 'delete' && confirm('Excluir este registo?')) {
+        debts = debts.filter(d => d.id !== debtData.id);
+        saveAndRender();
+      }
+    });
+
+    document.getElementById('cancelEditBtn').addEventListener('click', () => {
+      document.getElementById('debtForm').reset();
+      document.getElementById('editId').value = '';
+      document.getElementById('submitBtn').textContent = 'Guardar';
+      document.getElementById('cancelEditBtn').classList.add('hidden');
+    });
+
+    document.getElementById('debtForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const id = document.getElementById('editId').value;
+      const data = {
+        name: document.getElementById('inputName').value,
+        phone: document.getElementById('inputPhone').value,
+        description: document.getElementById('inputDescription').value,
+        totalAmount: parseFloat(document.getElementById('inputTotalAmount').value),
+        installmentAmount: parseFloat(document.getElementById('inputInstallmentAmount').value),
+        dueDate: document.getElementById('inputDueDate').value,
+        totalInstallments: parseInt(document.getElementById('inputTotalInstallments').value) || 0
+      };
+
+      if (id) {
+        const idx = debts.findIndex(d => d.id === id);
+        debts[idx] = { ...debts[idx], ...data };
+      } else {
+        debts.push({ ...data, id: Date.now().toString(), status: 'pending', paidInstallments: 0, history: [] });
+      }
+      saveAndRender();
+      document.getElementById('cancelEditBtn').click();
+    });
+  </script>
+</body>
+</html>
